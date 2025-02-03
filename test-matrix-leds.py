@@ -16,7 +16,7 @@ fonts = {
 }
 
 serial = spi(port=0, device=0, gpio=noop())
-device = max7219(serial, cascaded=4, block_orientation=-90, rotate=0, blocks_arranged_in_reverse_order=False)
+device = max7219(serial, cascaded=4, block_orientation=-90, rotate=2, blocks_arranged_in_reverse_order=False)
 print("Created device")
 
 
