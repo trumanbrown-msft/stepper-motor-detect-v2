@@ -16,8 +16,12 @@ for pin in sequence_pins:
 # Set up the button pin as input with a pull-up resistor
 GPIO.setup(button_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-# Turn on the first LED immediately
-GPIO.output(sequence_pins[0], GPIO.HIGH)
+# Function to reset the sequence
+def reset_sequence():
+    print("Resetting sequence...")
+    for pin in sequence_pins:
+        GPIO.output(pin, GPIO.LOW)
+    GPIO.output(sequence_pins[0], GPIO.HIGH)  # Restart first LED
 
 # Function to flash the second LED until button press
 def flash_led():
@@ -27,18 +31,46 @@ def flash_led():
         GPIO.output(sequence_pins[1], GPIO.LOW)
         time.sleep(0.5)
 
+# Main loop
 try:
-    print("Flashing second LED, waiting for button press...")
-    flash_led()  # Start flashing the second LED
-    
-    print("Button pressed! Turning second LED solid and activating third LED.")
-    GPIO.output(sequence_pins[1], GPIO.HIGH)  # Keep second LED on
-    time.sleep(0.5)
-    GPIO.output(sequence_pins[2], GPIO.HIGH)  # Turn on the third LED
-
-    # Keep the LEDs on
     while True:
-        time.sleep(1)
+        # Initial state: First LED on
+        GPIO.output(sequence_pins[0], GPIO.HIGH)
+        print("Flashing second LED, waiting for button press...")
+        
+        # Flash second LED until button is pressed
+        flash_led()
+
+        # Button pressed: Activate second LED permanently
+        print("Button pressed! Turning second LED solid and activating third LED.")
+        GPIO.output(sequence_pins[1], GPIO.HIGH)
+        time.sleep(0.5)
+        GPIO.output(sequence_pins[2], GPIO.HIGH)
+
+        # Wait for user input (single or double click detection)
+        click_count = 0
+        last_click_time = 0
+
+        while True:
+            if GPIO.input(button_pin) == GPIO.LOW:  # Button pressed
+                current_time = time.time()
+                
+                # Check if it's a double click (within 500ms)
+                if current_time - last_click_time < 0.5:
+                    click_count += 1
+                else:
+                    click_count = 1  # Reset click count if too slow
+
+                last_click_time = current_time
+
+                while GPIO.input(button_pin) == GPIO.LOW:  # Wait for release
+                    time.sleep(0.05)
+
+                if click_count == 2:  # Double click detected
+                    reset_sequence()
+                    break  # Restart main loop
+        
+            time.sleep(0.1)  # Small delay to avoid excessive CPU usage
 
 except KeyboardInterrupt:
     print("Program interrupted by user")
