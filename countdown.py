@@ -23,13 +23,21 @@ def reset_sequence():
         GPIO.output(pin, GPIO.LOW)
     GPIO.output(sequence_pins[0], GPIO.HIGH)  # Restart first LED
 
-# Function to flash the second LED until button press
 def flash_led():
+    """Flashes the second LED while checking for button press in real-time."""
+    last_toggle_time = time.time()
+    led_state = False  # Track LED state
+
     while GPIO.input(button_pin) == GPIO.HIGH:
-        GPIO.output(sequence_pins[1], GPIO.HIGH)
-        time.sleep(0.5)
-        GPIO.output(sequence_pins[1], GPIO.LOW)
-        time.sleep(0.5)
+        current_time = time.time()
+        
+        # Toggle LED every 0.5 seconds
+        if current_time - last_toggle_time >= 0.5:
+            led_state = not led_state  # Flip LED state
+            GPIO.output(sequence_pins[1], GPIO.HIGH if led_state else GPIO.LOW)
+            last_toggle_time = current_time
+
+        time.sleep(0.01)  # Small delay to reduce CPU usage
 
 # Main loop
 try:
