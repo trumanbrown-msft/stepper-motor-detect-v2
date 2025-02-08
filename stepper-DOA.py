@@ -2,77 +2,114 @@ import usb.core
 import usb.util
 import time
 import RPi.GPIO as GPIO
-import numpy as np
+import threading
 from tuning import Tuning
-from luma.led_matrix.device import max7219
-from luma.core.interface.serial import spi, noop
-
 
 # Pin configuration
-DIR = 20    # Direction GPIO Pin
-STEP = 21   # Step GPIO Pin
-CW = 1      # Clockwise Rotation
-CCW = 0     # Counterclockwise Rotation
-SPR = 200   # Steps per Revolution (1.8° per step)
+DIR = 20    
+STEP = 21   
+CW = 1      
+CCW = 0     
+SPR = 200    
 
 # Setup GPIO
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(DIR, GPIO.OUT)
 GPIO.setup(STEP, GPIO.OUT)
 
-# Setup LED matrix
-serial = spi(port=0, device=0, gpio=noop())
-device = max7219(serial, cascaded=4, block_orientation=-90, rotate=0, blocks_arranged_in_reverse_order=False)
-print("Created LED Matrix device")
-
-# Initialize USB device for ReSpeaker
+# Initialize ReSpeaker
 dev = usb.core.find(idVendor=0x2886, idProduct=0x0018)
-
 if not dev:
     raise ValueError("ReSpeaker 4 Mic Array not found")
 
 Mic_tuning = Tuning(dev)
 
-# Track audio direction and point motor
-try:
-    current_angle = 0  # Track the motor's position
+# Shared variable for current motor angle and tracking state
+current_angle = 0
+tracking = True  # Controls whether the system is tracking sound or calibrating
+calibrating = False  # Controls whether the system is in calibration mode
+
+# Function to rotate motor
+def rotate_motor(steps, direction):
+    GPIO.output(DIR, direction)
+    for _ in range(steps):
+        GPIO.output(STEP, GPIO.HIGH)
+        time.sleep(0.001)
+        GPIO.output(STEP, GPIO.LOW)
+        time.sleep(0.001)
+
+# Function to track noise direction and rotate motor
+def track_noise():
+    global current_angle
     while True:
-        direction = Mic_tuning.direction
-        print(f"Audio direction: {direction} degrees")
+        if tracking:  # Only track noise if not in calibration mode
+            direction = Mic_tuning.direction
+            target_angle = (360 - direction) % 360
+            angle_diff = target_angle - current_angle
 
-        # Calculate target angle based on direction
-        target_angle = 360 - direction  # Flip direction
-        # Normalize the target angle to within 0-360 degrees
-        target_angle = target_angle % 360
+            if angle_diff > 180:
+                angle_diff -= 360
+            elif angle_diff < -180:
+                angle_diff += 360
 
-        # Calculate the difference in angles
-        angle_diff = target_angle - current_angle
+            move_direction = CW if angle_diff > 0 else CCW
+            rotate_motor(abs(int(angle_diff / 1.8)), move_direction)
+            current_angle = target_angle
 
-        # Ensure angle_diff is between -180 and 180 (shortest path)
-        if angle_diff > 180:
-            angle_diff -= 360
-        elif angle_diff < -180:
-            angle_diff += 360
-
-        # Determine rotation direction (shortest path)
-        if angle_diff > 0:
-            GPIO.output(DIR, CW)  # Clockwise
-        else:
-            GPIO.output(DIR, CCW)  # Counterclockwise
-
-        # Rotate stepper motor (non-blocking)
-        step_count = int(abs(angle_diff) / 1.8)  # Steps per revolution (1.8° per step)
-        for _ in range(step_count):
-            GPIO.output(STEP, GPIO.HIGH)
-            time.sleep(0.001)
-            GPIO.output(STEP, GPIO.LOW)
-            time.sleep(0.001)
-
-        # Update current angle
-        current_angle = target_angle
-
-        # Small delay to prevent rapid movement
         time.sleep(0.04)
+
+# Function for user calibration with simple control
+def calibrate_motor():
+    global current_angle, tracking, calibrating
+    while True:
+        if calibrating:  # Allow calibration only when the system is in calibrating mode
+            user_input = input("Press 'a' to rotate counterclockwise, 'd' to rotate clockwise, 'q' to start tracking: ")
+            
+            if user_input == 'a':
+                current_angle -= 1.8  # Rotate counterclockwise by 1.8 degrees
+                print(f"Motor rotated to {current_angle} degrees.")
+            elif user_input == 'd':
+                current_angle += 1.8  # Rotate clockwise by 1.8 degrees
+                print(f"Motor rotated to {current_angle} degrees.")
+            elif user_input == 'q':
+                print("Starting noise tracking.")
+                tracking = True  # Resume noise tracking
+                calibrating = False  # Exit calibration mode
+                break
+            else:
+                print("Invalid input. Use 'a' to rotate left, 'd' to rotate right, or 'q' to start tracking.")
+
+# Function to begin calibration
+def start_calibration():
+    global calibrating, tracking
+    tracking = False  # Disable tracking during calibration
+    calibrating = True  # Enable calibration mode
+    print("Calibration mode enabled. Use 'a' or 'd' to manually adjust motor.")
+    calibrate_motor()  # Start the calibration
+
+# Start tracking and calibration in parallel
+try:
+    # Start noise tracking in a separate thread
+    track_thread = threading.Thread(target=track_noise, daemon=True)
+    track_thread.start()
+
+    # Main thread will allow user to trigger calibration or start tracking
+    while True:
+        user_input = input("Press 'c' to calibrate the motor, 'q' to start tracking: ")
+        
+        if user_input == 'c':
+            start_calibration()
+        elif user_input == 'q':
+            print("Starting noise tracking.")
+            tracking = True
+            calibrating = False
+            break
+        else:
+            print("Invalid input. Press 'c' to calibrate or 'q' to start tracking.")
+
+    # Keep the program running to allow continuous tracking and calibration
+    while True:
+        time.sleep(1)
 
 except KeyboardInterrupt:
     print("Exiting program.")

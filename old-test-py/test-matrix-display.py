@@ -25,13 +25,6 @@ def hello_world(msg):
     # start demo
     print(msg)
     show_message(device, msg, fill="white", font=proportional(CP437_FONT))
-    time.sleep(1)
-
-    msg = "Hello World!"
-    print(msg)
-    show_message(device, msg, fill="white", font=proportional(LCD_FONT), scroll_delay=0.1)
-
-    time.sleep(5)
     device.cleanup()
 
 def display_fonts(msg):
