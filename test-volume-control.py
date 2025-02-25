@@ -15,13 +15,17 @@ if not dev:
 Mic_tuning = Tuning(dev)
 
 def compute_rms(audio_data):
-    print(audio_data)
-    # Ensure data is valid and sanitize NaNs or invalid values
     if audio_data is None or len(audio_data) == 0:
         return 0.0
-    audio_data = np.array(audio_data, dtype=np.int16)  # Convert to int16 if needed
-    audio_data = np.nan_to_num(audio_data)  # Replace NaNs with 0
-    return np.sqrt(np.mean(np.square(audio_data)))  # Calculate RMS
+    
+    # Ensure data is int16 and clamp any out-of-bounds values
+    audio_data = np.clip(np.array(audio_data, dtype=np.int32), -32768, 32767)
+
+    # Sanitize NaNs and infinities
+    audio_data = np.nan_to_num(audio_data, nan=0.0, posinf=32767, neginf=-32768)
+    
+    # Calculate RMS
+    return np.sqrt(np.mean(np.square(audio_data)))
 
 # Initialize PyAudio
 p = pyaudio.PyAudio()
@@ -31,7 +35,7 @@ RATE = 16000       # Sample rate
 CHUNK = 1024       # Smaller chunk for real-time processing
 CHANNELS = 6       # ReSpeaker has 6 channels
 FORMAT = pyaudio.paInt16
-THRESHOLD = 1000   # Lowered threshold to test with
+THRESHOLD = 3000   # Lowered threshold to test with
 
 # Find ReSpeaker index dynamically
 def find_respeaker():
@@ -55,38 +59,26 @@ print("Listening for loud sounds...")
 
 try:
     while True:
-        # Read audio data safely
         data = stream.read(CHUNK, exception_on_overflow=False)
+        if len(data) < CHUNK * CHANNELS * 2:  # 2 bytes per sample (int16)
+            print(f"Incomplete chunk received. Skipping frame.")
+            continue
         
-        # Skip incomplete chunks
-        if len(data) < CHUNK:
-            print(f"Incomplete chunk received. Expected {CHUNK} bytes, got {len(data)}. Skipping frame.")
-            continue  # Skip processing incomplete frames
-
-        # Convert and validate data
         audio_data = np.frombuffer(data, dtype=np.int16)
-        audio_data = np.nan_to_num(audio_data)  # Replace NaNs with 0
+        audio_data = np.nan_to_num(audio_data)
 
-        # Handle reshaping issues
         if len(audio_data) % CHANNELS != 0:
             print("Invalid chunk size; skipping frame")
             continue
 
-        # Reshape to split channels
         audio_data = audio_data.reshape(-1, CHANNELS)
-
-        # Use channel 0 for processing
         channel_0 = audio_data[:, 0]
 
-        # Calculate RMS safely
         rms = compute_rms(channel_0)
-
-        # Print volume
         print(f"Volume: {rms:.2f}")
 
-        # Check threshold
         if rms > THRESHOLD:
-            direction = Mic_tuning.direction  # Get DOA
+            direction = Mic_tuning.direction
             print(f"Loud sound detected! Direction: {direction}°")
 
 except KeyboardInterrupt:
