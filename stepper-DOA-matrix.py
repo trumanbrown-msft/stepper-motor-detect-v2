@@ -22,17 +22,20 @@ GPIO.setup(DIR, GPIO.OUT)
 GPIO.setup(STEP, GPIO.OUT)
 
 # LED matrix setup
-device = max7219(spi(port=0, device=0, gpio=noop()), cascaded=4, block_orientation=-90, rotate=0)
+serial = spi(port=0, device=0, gpio=noop())
+device = max7219(serial, cascaded=4, block_orientation=-90, rotate=0)
 
-# USB device initialization
+# USB device setup
 dev = usb.core.find(idVendor=0x2886, idProduct=0x0018)
 if not dev:
     raise ValueError("ReSpeaker 4 Mic Array not found")
 Mic_tuning = Tuning(dev)
 
-# Audio setup
+# PyAudio setup
 p = pyaudio.PyAudio()
-RATE, CHUNK, CHANNELS, FORMAT, THRESHOLD = 16000, 1024, 6, pyaudio.paInt16, 3000
+RATE, CHUNK, CHANNELS = 16000, 1024, 6
+FORMAT = pyaudio.paInt16
+THRESHOLD = 3000
 
 def find_respeaker():
     for i in range(p.get_device_count()):
@@ -40,17 +43,20 @@ def find_respeaker():
             return i
     raise ValueError("ReSpeaker not found")
 
-device_index = find_respeaker()
-stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK, input_device_index=device_index)
+stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK, input_device_index=find_respeaker())
 
 # State variables
 current_angle, tracking, calibrating = 0, True, False
 
 def calculate_volume(audio_data):
+    if not audio_data.any():
+        return 0.0
     audio_data = np.clip(np.array(audio_data, dtype=np.int32), -32768, 32767)
-    return np.sqrt(np.mean(np.square(np.nan_to_num(audio_data))))
+    audio_data = np.nan_to_num(audio_data, nan=0.0, posinf=32767, neginf=-32768)
+    return np.sqrt(np.mean(np.square(audio_data)))
 
 def led_print(msg):
+    print(msg)
     device.clear()
     show_message(device, msg, fill="white", font=proportional(CP437_FONT), scroll_delay=0.01)
     time.sleep(1)
@@ -59,10 +65,15 @@ def led_print(msg):
 def audio_processing_thread():
     while True:
         data = stream.read(CHUNK, exception_on_overflow=False)
+        if len(data) < CHUNK * CHANNELS * 2:
+            continue
         audio_data = np.frombuffer(data, dtype=np.int16).reshape(-1, CHANNELS)[:, 0]
         rms = calculate_volume(audio_data)
+        print(f"Volume: {rms:.2f}")
         if rms > THRESHOLD:
-            led_print(f"Sound at {Mic_tuning.direction}°")
+            direction = Mic_tuning.direction
+            print(f"Loud sound detected! Direction: {direction}°")
+            led_print(f"Sound at {direction}°")
 
 def rotate_motor(steps, direction):
     GPIO.output(DIR, direction)
@@ -76,7 +87,8 @@ def track_noise():
     global current_angle
     while True:
         if tracking:
-            target_angle = (360 - Mic_tuning.direction) % 360
+            direction = Mic_tuning.direction
+            target_angle = (360 - direction) % 360
             angle_diff = (target_angle - current_angle + 180) % 360 - 180
             rotate_motor(abs(int(angle_diff / 1.8)), CW if angle_diff > 0 else CCW)
             current_angle = target_angle
@@ -85,18 +97,23 @@ def track_noise():
 def calibrate_motor():
     global current_angle, tracking, calibrating
     while calibrating:
-        cmd = input("'a': CCW, 'd': CW, 'q': start tracking: ")
-        if cmd == 'a':
+        user_input = input("'a': counterclockwise, 'd': clockwise, 'q': track: ")
+        if user_input == 'a':
             current_angle -= 1.8
-        elif cmd == 'd':
+            print(f"Motor: {current_angle}°")
+        elif user_input == 'd':
             current_angle += 1.8
-        elif cmd == 'q':
+            print(f"Motor: {current_angle}°")
+        elif user_input == 'q':
             tracking, calibrating = True, False
-            break
+            print("Tracking enabled.")
+        else:
+            print("Invalid command.")
 
 def start_calibration():
-    global calibrating, tracking
+    global tracking, calibrating
     tracking, calibrating = False, True
+    print("Calibration mode.")
     calibrate_motor()
 
 try:
@@ -104,13 +121,15 @@ try:
     Thread(target=audio_processing_thread, daemon=True).start()
 
     while True:
-        cmd = input("'c': calibrate, 'q': track: ")
-        if cmd == 'c':
+        user_input = input("'c': calibrate, 'q': track: ")
+        if user_input == 'c':
             start_calibration()
-        elif cmd == 'q':
+        elif user_input == 'q':
             tracking, calibrating = True, False
+            print("Tracking enabled.")
         else:
-            print("Invalid command")
+            print("Invalid command.")
+        time.sleep(1)
 
 except KeyboardInterrupt:
     GPIO.cleanup()
